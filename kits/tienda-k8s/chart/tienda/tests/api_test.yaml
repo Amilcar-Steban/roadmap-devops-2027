@@ -1,0 +1,68 @@
+# helm unittest chart/tienda   (plugin helm-unittest)
+suite: API
+templates:
+  - templates/api.yaml
+values:
+  - ../values-kind.yaml
+tests:
+  - it: cumple Pod Security restricted
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - equal: { path: spec.template.spec.securityContext.runAsNonRoot, value: true }
+      - equal: { path: "spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation", value: false }
+      - equal: { path: "spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem", value: true }
+      - contains: { path: "spec.template.spec.containers[0].securityContext.capabilities.drop", content: ALL }
+
+  - it: la liveness no depende de la base de datos
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - exists: { path: "spec.template.spec.containers[0].livenessProbe.tcpSocket" }
+      - equal: { path: "spec.template.spec.containers[0].readinessProbe.httpGet.path", value: /health }
+
+  - it: con HPA no fija replicas (no pelean)
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - notExists: { path: spec.replicas }
+
+  - it: sin HPA fija replicas y no crea el HPA
+    set:
+      api.hpa.enabled: false
+      api.replicas: 4
+    asserts:
+      - equal: { path: spec.replicas, value: 4 }
+        documentSelector: { path: kind, value: Deployment }
+      - hasDocuments: { count: 4 } # ServiceAccount, Deployment, Service, PDB
+
+  - it: la contraseña llega desde un Secret, nunca en claro
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - contains:
+          path: "spec.template.spec.containers[0].env"
+          content:
+            name: DB_PASSWORD
+            valueFrom: { secretKeyRef: { name: tienda-bd, key: password } }
+
+  - it: exige el host de la base de datos
+    set:
+      api.bd.host: ""
+    asserts:
+      - failedTemplate: { errorMessage: api.bd.host es obligatorio }
+
+  - it: sin observabilidad, el pod no pide instrumentación
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    asserts:
+      - notExists: { path: spec.template.metadata.annotations }
+
+  - it: con observabilidad, el Operator inyecta la instrumentación de Python
+    template: templates/api.yaml
+    documentSelector: { path: kind, value: Deployment }
+    set: { observabilidad.enabled: true }
+    asserts:
+      - equal:
+          path: spec.template.metadata.annotations["instrumentation.opentelemetry.io/inject-python"]
+          value: observabilidad/tienda

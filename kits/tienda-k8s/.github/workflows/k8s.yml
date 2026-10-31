@@ -1,0 +1,107 @@
+# Chart de la tienda:
+#   validar   · siempre, sin clúster: helm lint, pruebas unitarias, kubeconform y kube-linter
+#   desplegar · main (opt-in): helm upgrade en EKS con OIDC. Se activa creando la variable
+#               EKS_DEPLOY_ROLE_ARN (rol con un access entry limitado al namespace tienda).
+name: Kubernetes
+
+on:
+  pull_request:
+    paths: ["chart/**", ".github/workflows/k8s.yml"]
+  push:
+    branches: [main]
+    paths: ["chart/**", ".github/workflows/k8s.yml"]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: k8s-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HELM_VERSION: v4.3.1
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: helm lint (laboratorio y producción)
+        run: |
+          helm lint chart/tienda -f chart/tienda/values-kind.yaml
+          helm lint chart/tienda -f chart/tienda/values-prod.yaml
+
+      - name: Pruebas unitarias del chart
+        run: |
+          # Helm 4 exige firma en los plugins; helm-unittest no la publica
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.2.1 --verify=false
+          helm unittest chart/tienda
+
+      - name: Renderizar
+        run: |
+          mkdir -p render
+          for v in kind prod; do
+            helm template tienda chart/tienda -n tienda -f "chart/tienda/values-$v.yaml" > "render/$v.yaml"
+          done
+
+      - name: kubeconform (esquemas de Kubernetes 1.37 y de los CRDs)
+        run: |
+          docker run --rm -v "$PWD/render":/render ghcr.io/yannh/kubeconform:v0.8.0 \
+            -strict -summary -kubernetes-version 1.37.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /render/kind.yaml /render/prod.yaml
+
+      - name: kube-linter (buenas prácticas)
+        run: docker run --rm -v "$PWD/render":/render stackrox/kube-linter:v0.8.3 lint /render
+
+  desplegar:
+    needs: validar
+    if: github.ref == 'refs/heads/main' && vars.EKS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: produccion
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.EKS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: helm upgrade
+        env:
+          CLUSTER: ${{ vars.EKS_CLUSTER }}
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+        run: |
+          aws eks update-kubeconfig --name "$CLUSTER" --region us-east-1
+          helm upgrade --install tienda chart/tienda -n tienda \
+            -f chart/tienda/values-prod.yaml \
+            --set "imagen.registro=ghcr.io/${OWNER,,}" \
+            --set "api.etiqueta=sha-${SHA:0:7}" --set "frontend.etiqueta=sha-${SHA:0:7}" \
+            --rollback-on-failure --timeout 10m
+          kubectl rollout status deploy/tienda-api -n tienda --timeout=5m

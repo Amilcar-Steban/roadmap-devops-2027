@@ -1,0 +1,7 @@
+apiVersion: v2
+name: tienda
+description: La tienda del Roadmap DevOps 2027 (API + frontend) en Kubernetes
+type: application
+version: 0.1.0 # versión del chart: súbela con cada cambio de las plantillas
+appVersion: "0.2.0" # versión de la aplicación (etiqueta de imagen por defecto)
+kubeVersion: ">=1.33.0-0"

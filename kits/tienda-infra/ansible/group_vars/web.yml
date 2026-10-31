@@ -1,0 +1,5 @@
+nginx_dominio: sitio.ejemplo.com
+nginx_puerto_app: 8080
+nginx_entorno: dev
+comun_usuarios_ssh:
+  - deploy

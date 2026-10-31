@@ -1,0 +1,8 @@
+# La función que ejecuta la Composition. Va sola en este archivo porque "crossplane composition
+# render" solo acepta Functions (el proveedor está en proveedor.yaml).
+apiVersion: pkg.crossplane.io/v1beta1
+kind: Function
+metadata:
+  name: function-patch-and-transform
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-patch-and-transform:v0.11.2

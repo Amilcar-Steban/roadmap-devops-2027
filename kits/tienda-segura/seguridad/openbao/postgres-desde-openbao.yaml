@@ -1,0 +1,17 @@
+# La NetworkPolicy de la tienda solo deja entrar en PostgreSQL a la API. OpenBao también necesita
+# llegar para crear y borrar los usuarios temporales: sin esto, "bao write database/config" se queda colgado.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-desde-openbao
+  namespace: tienda
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: secretos }
+      ports:
+        - { port: 5432, protocol: TCP }

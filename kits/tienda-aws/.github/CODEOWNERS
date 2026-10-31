@@ -1,0 +1,5 @@
+# Cambia tu-usuario por tu usuario o un equipo (@org/plataforma).
+# Con "Require review from Code Owners" en la protección de main, tocar el pipeline exige su revisión.
+*            @tu-usuario
+/.github/    @tu-usuario
+/scripts/    @tu-usuario

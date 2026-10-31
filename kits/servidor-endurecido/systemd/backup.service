@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup de la web y de la configuración de Nginx
+
+[Service]
+Type=oneshot
+ExecStart=/opt/scripts/backup.sh -s /var/www -d /backups/www -k 7
+ExecStart=/opt/scripts/backup.sh -s /etc/nginx -d /backups/nginx -k 7
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/backups

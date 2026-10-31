@@ -1,0 +1,11 @@
+# TechDocs: la documentación vive con el código y Backstage la publica en la página del servicio.
+site_name: Tienda
+site_description: Documentación de la tienda del Roadmap DevOps 2027
+nav:
+  - Inicio: index.md
+  - Arquitectura: arquitectura.md
+  - Modelo de amenazas: modelo-amenazas.md
+  - Decisiones:
+      - "0001 · Imágenes firmadas y verificadas al admitir": adr/0001-firma-de-imagenes.md
+plugins:
+  - techdocs-core

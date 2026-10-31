@@ -1,0 +1,14 @@
+# Normaliza a LF en el repositorio y deja que Git elija en cada checkout
+* text=auto eol=lf
+# Scripts y configuración: siempre LF, también en Windows
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.conf text eol=lf
+# Scripts de Windows: CRLF
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+# Binarios: no tocar
+*.png  binary
+*.zip  binary

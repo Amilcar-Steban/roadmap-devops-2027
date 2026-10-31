@@ -1,0 +1,109 @@
+# Generado desde FastAPI: python -c "from app.main import app; …app.openapi()"
+openapi: 3.1.0
+info:
+  title: Tienda API
+  version: 0.3.0
+paths:
+  /health:
+    get:
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/productos:
+    get:
+      summary: Productos
+      operationId: productos_api_productos_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/pedidos:
+    get:
+      summary: Total Pedidos
+      operationId: total_pedidos_api_pedidos_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+    post:
+      summary: Crear Pedido
+      operationId: crear_pedido_api_pedidos_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Pedido'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    Pedido:
+      properties:
+        producto_id:
+          type: integer
+          title: Producto Id
+        cantidad:
+          type: integer
+          maximum: 100.0
+          exclusiveMinimum: 0.0
+          title: Cantidad
+      type: object
+      required:
+      - producto_id
+      - cantidad
+      title: Pedido
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError

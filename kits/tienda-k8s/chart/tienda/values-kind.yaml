@@ -1,0 +1,17 @@
+# helm upgrade --install tienda ./chart/tienda -n tienda -f chart/tienda/values-kind.yaml
+api:
+  replicas: 1
+  bd:
+    host: postgres
+    sslmode: disable
+  redisUrl: redis://valkey:6379/0
+  hpa:
+    min: 1
+    max: 4
+frontend:
+  replicas: 1
+gateway:
+  crear: true
+  hostname: tienda.localhost
+local:
+  enabled: true

@@ -1,0 +1,99 @@
+# Las reglas de prometheus/reglas/tienda.yml (la versión Compose) como recurso del Prometheus Operator.
+# Se genera desde ese archivo para que no diverjan (README: "Reglas en Kubernetes").
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tienda
+  namespace: monitoring
+spec:
+  # SLO de disponibilidad de la API: 99,9 % de peticiones sin 5xx en 30 días.
+  # Las métricas vienen de OpenTelemetry: el histograma http.server.request.duration llega a
+  # Prometheus como http_server_request_duration_seconds_*; su _count son las peticiones.
+  groups:
+    - name: tienda-api-registro
+      interval: 30s
+      rules:
+        - record: job:http_requests:rate5m
+          expr: sum by (job) (rate(http_server_request_duration_seconds_count[5m]))
+        - record: job_route:http_latency:p95_5m
+          expr: |
+            histogram_quantile(0.95,
+              sum by (job, http_route, le) (rate(http_server_request_duration_seconds_bucket[5m])))
+        # Proporción de errores en las ventanas que usan las alertas de burn rate.
+        # "or … * 0": si nunca hubo un 5xx, esa serie no existe y la división daría un resultado
+        # vacío (el panel mostraría "No data" en lugar de 0 %).
+        - record: job:http_errors:ratio_rate5m
+          expr: |
+            (
+              sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m]))
+              or sum by (job) (rate(http_server_request_duration_seconds_count[5m])) * 0
+            )
+            / sum by (job) (rate(http_server_request_duration_seconds_count[5m]))
+        - record: job:http_errors:ratio_rate30m
+          expr: |
+            (
+              sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[30m]))
+              or sum by (job) (rate(http_server_request_duration_seconds_count[30m])) * 0
+            )
+            / sum by (job) (rate(http_server_request_duration_seconds_count[30m]))
+        - record: job:http_errors:ratio_rate1h
+          expr: |
+            (
+              sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[1h]))
+              or sum by (job) (rate(http_server_request_duration_seconds_count[1h])) * 0
+            )
+            / sum by (job) (rate(http_server_request_duration_seconds_count[1h]))
+        - record: job:http_errors:ratio_rate6h
+          expr: |
+            (
+              sum by (job) (rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[6h]))
+              or sum by (job) (rate(http_server_request_duration_seconds_count[6h])) * 0
+            )
+            / sum by (job) (rate(http_server_request_duration_seconds_count[6h]))
+
+    - name: tienda-api-alertas
+      rules:
+        # Burn rate multiventana (The Site Reliability Workbook): 14,4 = 2 % del presupuesto en 1 h
+        - alert: ApiPresupuestoConsumoRapido
+          expr: |
+            job:http_errors:ratio_rate1h{job="tienda-api"} > (14.4 * 0.001)
+            and
+            job:http_errors:ratio_rate5m{job="tienda-api"} > (14.4 * 0.001)
+          for: 1m
+          labels: { severity: critical, equipo: tienda }
+          annotations:
+            summary: "La API tiene un {{ $value | humanizePercentage }} de errores en la última hora: gasta el presupuesto más de 14 veces más rápido de lo sostenible"
+            runbook_url: "https://github.com/tu-usuario/tienda-pipeline/blob/main/observabilidad/RUNBOOK.md#apipresupuestoconsumorapido"
+        # 6 = 5 % del presupuesto en 6 h
+        - alert: ApiPresupuestoConsumoSostenido
+          expr: |
+            job:http_errors:ratio_rate6h{job="tienda-api"} > (6 * 0.001)
+            and
+            job:http_errors:ratio_rate30m{job="tienda-api"} > (6 * 0.001)
+          for: 5m
+          labels: { severity: critical, equipo: tienda }
+          annotations:
+            summary: "La API consume el presupuesto de error 6 veces más rápido de lo sostenible"
+            runbook_url: "https://github.com/tu-usuario/tienda-pipeline/blob/main/observabilidad/RUNBOOK.md#apipresupuestoconsumorapido"
+        - alert: ApiSinTrafico # la carga es constante: cero peticiones es un síntoma, no calma
+          expr: sum(job:http_requests:rate5m{job="tienda-api"}) == 0 or absent(job:http_requests:rate5m{job="tienda-api"})
+          for: 5m
+          labels: { severity: warning, equipo: tienda }
+          annotations:
+            summary: "No llegan peticiones a la API (o no llegan sus métricas)"
+        - alert: CollectorCaido
+          expr: up{job="collector"} == 0
+          for: 2m
+          labels: { severity: warning, equipo: plataforma }
+          annotations:
+            summary: "El OpenTelemetry Collector no responde: no llega telemetría"
+
+    - name: meta
+      rules:
+        # Alerta "de hombre muerto": siempre activa. Si un servicio externo deja de recibirla,
+        # es que Prometheus o Alertmanager están caídos.
+        - alert: Watchdog
+          expr: vector(1)
+          labels: { severity: none }
+          annotations:
+            summary: "Siempre activa: comprueba que la cadena de alertas funciona"

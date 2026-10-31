@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Atributos de recurso de OpenTelemetry que pasan a ser etiquetas de cada serie (el resto queda
+# en target_info). Con service.version puedes comparar versiones, como en el canary de la Fase 6.
+otlp:
+  promote_resource_attributes:
+    - service.version
+    - deployment.environment.name
+
+rule_files: ["reglas/*.yml"]
+
+alerting:
+  alertmanagers:
+    - static_configs: [{ targets: ["alertmanager:9093"] }]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs: [{ targets: ["localhost:9090"] }]
+  - job_name: collector # si el Collector se cae, up{job="collector"} pasa a 0
+    static_configs: [{ targets: ["collector:8888"] }]

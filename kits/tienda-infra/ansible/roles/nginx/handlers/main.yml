@@ -1,0 +1,12 @@
+# Los dos handlers escuchan el mismo aviso y se ejecutan en orden: primero se valida, y si
+# la configuración tiene un error el playbook se detiene sin recargar (Nginx sigue con la anterior).
+- name: Validar la configuración de nginx
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  listen: Validar y recargar nginx
+
+- name: Recargar nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  listen: Validar y recargar nginx

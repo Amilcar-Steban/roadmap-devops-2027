@@ -1,0 +1,42 @@
+# Reglas para todo lo que se despliega en los namespaces de la tienda (Kyverno 1.17+, políticas CEL).
+# Empieza con validationActions: [Audit] (registra en PolicyReports sin bloquear), corrige lo que
+# incumpla y después pasa a [Deny].
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: tienda-cargas-seguras
+  annotations:
+    policies.kyverno.io/description: Imágenes de nuestro registro con versión fija y requests obligatorios.
+spec:
+  validationActions: [Deny]
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+    namespaceSelector:
+      matchExpressions:
+        - { key: kubernetes.io/metadata.name, operator: In, values: [tienda, tienda-dev, tienda-prod] }
+  # La misma regla se aplica también a Deployments, StatefulSets… (falla en el PR, no al crear el pod)
+  autogen:
+    podControllers:
+      controllers: [deployments, statefulsets, daemonsets, jobs, cronjobs]
+  variables:
+    - name: contenedores
+      expression: object.spec.containers + object.spec.?initContainers.orValue([])
+  validations:
+    - message: "Las imágenes de la tienda deben venir de ghcr.io/tu-usuario/"
+      expression: >-
+        variables.contenedores.all(c,
+          !c.image.contains('/tienda-') || c.image.startsWith('ghcr.io/tu-usuario/'))
+    - message: "Usa una etiqueta concreta o un digest, nunca :latest ni la etiqueta implícita"
+      expression: >-
+        variables.contenedores.all(c,
+          c.image.contains('@sha256:') ||
+          (c.image.split('/')[c.image.split('/').size() - 1].contains(':') && !c.image.endsWith(':latest')))
+    - message: "Todos los contenedores necesitan requests de CPU y memoria"
+      expression: >-
+        object.spec.containers.all(c,
+          has(c.resources) && has(c.resources.requests) &&
+          'cpu' in c.resources.requests && 'memory' in c.resources.requests)

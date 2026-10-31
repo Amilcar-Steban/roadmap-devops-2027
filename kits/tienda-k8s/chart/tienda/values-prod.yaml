@@ -1,0 +1,24 @@
+# EKS con la infraestructura de la Fase 4. Sustituye los valores de ejemplo por las salidas de
+# Terraform (endpoint_bd, endpoint_cache, secreto_bd_arn) o léelos en el pipeline.
+# El esquema lo migra un Job antes de cada actualización; la API arranca sin crear tablas
+migraciones:
+  job: true
+api:
+  replicas: 3
+  bd:
+    host: tienda-prod.abc123.us-east-1.rds.amazonaws.com
+  redisUrl: rediss://master.tienda-prod.abc123.use1.cache.amazonaws.com:6379/0
+  egresoDatos:
+    - 10.20.100.0/24 # subredes de datos de la VPC de prod (Fase 4)
+    - 10.20.101.0/24
+  hpa:
+    min: 3
+    max: 10
+frontend:
+  replicas: 2
+gateway:
+  crear: false # el Gateway "publica" lo gestiona el equipo de plataforma, con su certificado
+  hostname: tienda.ejemplo.com
+externalSecret:
+  enabled: true
+  claveRemota: "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-0123abcd-AbCdEf"

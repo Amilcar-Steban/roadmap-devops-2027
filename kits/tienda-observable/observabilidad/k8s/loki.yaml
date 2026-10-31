@@ -1,0 +1,26 @@
+# Loki en un solo proceso con disco local: suficiente para el laboratorio (en EKS, con S3)
+#   helm install loki loki --repo https://grafana.github.io/helm-charts --version 7.5.0 -n monitoring -f loki.yaml
+deploymentMode: SingleBinary
+loki:
+  auth_enabled: false
+  commonConfig: { replication_factor: 1 }
+  storage: { type: filesystem }
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index: { prefix: index_, period: 24h }
+  limits_config:
+    allow_structured_metadata: true # los atributos de OTLP (trace_id, nivel…) llegan como metadatos
+singleBinary: { replicas: 1 }
+backend: { replicas: 0 }
+read: { replicas: 0 }
+write: { replicas: 0 }
+chunksCache: { enabled: false }
+resultsCache: { enabled: false }
+gateway: { enabled: false }
+lokiCanary: { enabled: false }
+test: { enabled: false }
+minio: { enabled: false }

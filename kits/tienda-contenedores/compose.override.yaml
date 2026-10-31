@@ -1,0 +1,9 @@
+# Se aplica solo en desarrollo (automáticamente si COMPOSE_FILE no está definido)
+services:
+  api:
+    build:
+      target: dev
+    # Recarga en caliente: el código del host se monta sobre el de la imagen
+    volumes:
+      - ./api/app:/app/app
+    ports: ["127.0.0.1:8000:8000"]

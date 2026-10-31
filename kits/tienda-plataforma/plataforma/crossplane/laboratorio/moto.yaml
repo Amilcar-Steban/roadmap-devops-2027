@@ -1,0 +1,36 @@
+# SOLO PARA LABORATORIO: el proveedor de AWS habla con moto (simulador) y no con AWS
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-falso
+  namespace: crossplane-system
+type: Opaque
+stringData:
+  credentials: |
+    [default]
+    aws_access_key_id = test
+    aws_secret_access_key = test
+---
+apiVersion: aws.m.upbound.io/v1beta1
+kind: ClusterProviderConfig
+metadata:
+  name: default # el que usan por defecto los recursos ".m." (providerConfigRef)
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: aws-falso
+      key: credentials
+  endpoint:
+    hostnameImmutable: true
+    # sin esta lista el proveedor IGNORA la URL y llama a AWS real
+    services: [rds, sts, iam, ec2, kms, secretsmanager]
+    source: Custom
+    url:
+      type: Static
+      static: http://moto:5000 # el contenedor de moto, en la red de kind
+  skip_credentials_validation: true
+  skip_metadata_api_check: true
+  skip_requesting_account_id: true
+  skip_region_validation: true

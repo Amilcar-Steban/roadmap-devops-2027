@@ -1,0 +1,112 @@
+# Alta de equipo automática: crear un namespace con las etiquetas tipo=equipo y equipo=<nombre>
+# basta para que aparezcan su cuota, sus límites por defecto, su red cerrada y sus permisos.
+# synchronize: si alguien borra o cambia uno de estos objetos, Kyverno lo vuelve a crear.
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: alta-de-equipo
+spec:
+  evaluation:
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [namespaces]
+  matchConditions:
+    - name: es-de-un-equipo
+      expression: >-
+        object.metadata.?labels.tipo.orValue('') == 'equipo' &&
+        object.metadata.?labels.equipo.orValue('') != ''
+  variables:
+    - name: ns
+      expression: object.metadata.name
+    - name: equipo
+      expression: object.metadata.labels.equipo
+  generate:
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: v1
+          kind: ResourceQuota
+          metadata:
+            name: cuota
+            namespace: (( variables.ns ))
+            labels:
+              equipo: (( variables.equipo ))
+          spec:
+            hard:
+              requests.cpu: "8"
+              requests.memory: 16Gi
+              limits.memory: 24Gi
+              pods: "60"
+              persistentvolumeclaims: "10"
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: v1
+          kind: LimitRange
+          metadata:
+            name: por-defecto
+            namespace: (( variables.ns ))
+          spec:
+            limits:
+              - type: Container
+                defaultRequest: { cpu: 100m, memory: 128Mi }
+                default: { memory: 256Mi }
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: denegar-entrada
+            namespace: (( variables.ns ))
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+    - template:
+        interpolate: cel
+        value: |
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: equipo-edita
+            namespace: (( variables.ns ))
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: edit
+          subjects:
+            - apiGroup: rbac.authorization.k8s.io
+              kind: Group
+              name: (( variables.equipo ))
+---
+# El controlador en segundo plano de Kyverno necesita permiso para crear estos objetos (y para
+# conceder "edit", Kubernetes exige poder hacer "bind" de ese rol).
+# Trivy (KSV-0056) avisa de que controlar NetworkPolicies permite saltarse el aislamiento de red. Es
+# justo lo que hace la alta de equipo (crea la de "denegar la entrada"), y el permiso es del
+# controlador de Kyverno, no de una persona: excepción aceptada en .trivyignore.yaml (solo este archivo).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-alta-de-equipo
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: [resourcequotas, limitranges]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [edit]
+    verbs: [bind]

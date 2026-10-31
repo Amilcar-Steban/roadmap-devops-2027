@@ -1,0 +1,6 @@
+# Solo entra en la imagen lo que necesita: app/ y requirements.txt
+__pycache__
+*.pyc
+.venv
+tests
+.env

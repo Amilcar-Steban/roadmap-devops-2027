@@ -1,0 +1,7 @@
+# ansible-galaxy collection install -r requirements.yml
+# (ansible-core no incluye estas colecciones; el paquete completo "ansible" sí)
+collections:
+  - name: community.general # módulo ufw
+    version: ">=10.0.0"
+  - name: ansible.posix
+    version: ">=2.0.0"

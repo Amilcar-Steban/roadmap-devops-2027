@@ -1,0 +1,9 @@
+# El servidor de la Fase 0, como código.
+#   ansible-playbook sitio.yml --check --diff     simulación
+#   ansible-playbook sitio.yml                    aplicar (la segunda vez: changed=0)
+- name: Servidor web endurecido
+  hosts: web
+  become: true
+  roles:
+    - comun
+    - nginx

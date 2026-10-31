@@ -1,0 +1,92 @@
+# Despliega la tienda en AWS (Fase 3): API en ECS Fargate (ARM64) y frontend en S3 + CloudFront.
+# Se lanza a mano (Actions → Deploy AWS → Run workflow). Requiere en el entorno "produccion":
+#   variables AWS_ROLE_ARN, AWS_REGION, ECR_REPOSITORY, ECS_CLUSTER, ECS_SERVICE, WEB_BUCKET, CF_DISTRIBUTION
+# y el rol de aws/iam/gha-oidc-confianza.json + aws/iam/gha-deploy-politica.json (sin claves de acceso).
+name: Deploy AWS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+jobs:
+  desplegar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: produccion
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      # Fargate sobre Graviton (ARM64): la imagen se construye para arm64 con emulación QEMU.
+      # En repos públicos puedes usar runs-on: ubuntu-24.04-arm y quitar QEMU para ir más rápido.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build y push a ECR
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./api
+          target: runtime
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:sha-${{ github.sha }}
+          build-args: |
+            VERSION=sha-${{ github.sha }}
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=api-arm64
+          cache-to: type=gha,mode=max,scope=api-arm64
+
+      # La task definition la crea la infraestructura (a mano en la Fase 3, con Terraform desde la
+      # Fase 4): el pipeline parte de la que usa el servicio y solo cambia la imagen. Con un JSON del
+      # repo, sus roles y su grupo de logs dejan de coincidir en cuanto la infraestructura cambia.
+      - name: Task definition actual del servicio
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+        run: |
+          actual=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text)
+          aws ecs describe-task-definition --task-definition "$actual" --query taskDefinition > task-definition.json
+
+      - id: task
+        uses: aws-actions/amazon-ecs-render-task-definition@8d79160660ad39c402a16e5fc7cd2a32e8f7d6b7 # v1.9.1
+        with:
+          task-definition: task-definition.json
+          container-name: api
+          image: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:sha-${{ github.sha }}
+
+      # Falla si el servicio no queda estable; el circuit breaker de ECS vuelve a la versión anterior
+      - uses: aws-actions/amazon-ecs-deploy-task-definition@a00d4d57ac0de1a99b39fe469f3d898d38717c2b # v2.6.4
+        with:
+          task-definition: ${{ steps.task.outputs.task-definition }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          service: ${{ vars.ECS_SERVICE }}
+          wait-for-service-stability: true
+
+      - name: Publicar el frontend e invalidar la caché
+        env:
+          WEB_BUCKET: ${{ vars.WEB_BUCKET }}
+          CF_DISTRIBUTION: ${{ vars.CF_DISTRIBUTION }}
+        # HTML, JS y CSS (la CSP no permite nada en línea); con --delete se retira lo que ya no existe
+        run: |
+          aws s3 sync frontend/ "s3://${WEB_BUCKET}/" --delete --cache-control "no-cache" \
+            --exclude "*" --include "*.html" --include "*.js" --include "*.css"
+          aws cloudfront create-invalidation --distribution-id "$CF_DISTRIBUTION" --paths "/*"

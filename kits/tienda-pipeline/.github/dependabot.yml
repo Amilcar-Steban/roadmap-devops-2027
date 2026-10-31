@@ -1,0 +1,14 @@
+# PRs semanales para mantener al día acciones (por SHA), imágenes base y dependencias
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      acciones: { patterns: ["*"] }
+  - package-ecosystem: docker
+    directories: [/api, /frontend]
+    schedule: { interval: weekly }
+  - package-ecosystem: pip
+    directory: /api
+    schedule: { interval: weekly }

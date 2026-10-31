@@ -1,0 +1,6 @@
+[Unit]
+Description=Healthcheck del servidor
+
+[Service]
+Type=oneshot
+ExecStart=/opt/scripts/healthcheck.sh

@@ -18,4 +18,8 @@ Las soluciones de referencia del proyecto:
 [tienda-gitops](https://github.com/Amilcar-Steban/tienda-gitops) ·
 [tienda-agente](https://github.com/Amilcar-Steban/tienda-agente)
 
+Los kits también están fuera de la web: cada uno en la carpeta [`kits/`](kits/) y como `.zip` en
+[Releases](https://github.com/Amilcar-Steban/roadmap-devops-2027/releases/latest). Son los mismos
+archivos que descarga el botón de cada fase.
+
 Toda la página está en `index.html` (sin dependencias, salvo las fuentes de Google).

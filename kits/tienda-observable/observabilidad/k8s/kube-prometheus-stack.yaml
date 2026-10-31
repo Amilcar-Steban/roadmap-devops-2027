@@ -1,0 +1,23 @@
+# Valores de kube-prometheus-stack para la tienda (laboratorio en kind; en EKS, igual con más recursos)
+#   helm install monitoring kube-prometheus-stack --repo https://prometheus-community.github.io/helm-charts \
+#     --version 92.16.1 -n monitoring --create-namespace -f kube-prometheus-stack.yaml
+prometheus:
+  prometheusSpec:
+    # La tienda no expone /metrics: sus métricas llegan por OTLP desde el Collector, como en Compose
+    enableOTLPReceiver: true
+    otlp:
+      promoteResourceAttributes: [service.version, deployment.environment.name, k8s.namespace.name]
+    retention: 7d
+    # Sin esto, solo vería ServiceMonitors y reglas con la etiqueta "release: monitoring"
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 400Mi }
+      limits: { memory: 1Gi }
+grafana:
+  adminPassword: solo-para-el-laboratorio # en un clúster de verdad, desde un Secret (Fase 8)
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring:3100

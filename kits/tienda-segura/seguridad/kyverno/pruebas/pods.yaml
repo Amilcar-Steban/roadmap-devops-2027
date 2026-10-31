@@ -1,0 +1,53 @@
+# Casos de prueba para kyverno test: uno correcto y uno por cada regla incumplida
+apiVersion: v1
+kind: Pod
+metadata: { name: correcto, namespace: tienda }
+spec:
+  containers:
+    - name: api
+      image: ghcr.io/tu-usuario/tienda-api:0.2.0
+      resources: { requests: { cpu: 100m, memory: 128Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: registro-ajeno, namespace: tienda }
+spec:
+  containers:
+    - name: api
+      image: docker.io/atacante/tienda-api:0.2.0
+      resources: { requests: { cpu: 100m, memory: 128Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: con-latest, namespace: tienda }
+spec:
+  containers:
+    - name: api
+      image: ghcr.io/tu-usuario/tienda-api:latest
+      resources: { requests: { cpu: 100m, memory: 128Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: sin-etiqueta, namespace: tienda }
+spec:
+  containers:
+    - name: web
+      image: nginx
+      resources: { requests: { cpu: 100m, memory: 128Mi } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: sin-requests, namespace: tienda }
+spec:
+  containers:
+    - name: api
+      image: ghcr.io/tu-usuario/tienda-api:0.2.0
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: por-digest, namespace: tienda }
+spec:
+  containers:
+    - name: api
+      image: ghcr.io/tu-usuario/tienda-api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      resources: { requests: { cpu: 100m, memory: 128Mi } }

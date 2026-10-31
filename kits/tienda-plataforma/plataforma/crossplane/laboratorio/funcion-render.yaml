@@ -1,0 +1,11 @@
+# Solo para "crossplane composition render" sin socket de Docker: la función ya corre en un
+# contenedor (docker run … --insecure) y el render se conecta a ella en vez de arrancarla.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: Function
+metadata:
+  name: function-patch-and-transform
+  annotations:
+    render.crossplane.io/runtime: Development
+    render.crossplane.io/runtime-development-target: fn-pt:9443
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/function-patch-and-transform:v0.11.2

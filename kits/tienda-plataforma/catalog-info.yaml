@@ -1,0 +1,106 @@
+# La tienda en el catálogo de Backstage. Backstage lo descubre en el repositorio (proveedor de
+# GitHub) y dibuja el grafo: quién es dueño de qué y qué depende de qué.
+apiVersion: backstage.io/v1alpha1
+kind: Domain
+metadata:
+  name: comercio
+  title: Comercio
+  description: Todo lo que permite vender en línea
+spec:
+  owner: group:equipo-tienda
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: tienda
+  title: Tienda
+  description: Catálogo y pedidos de la tienda del Roadmap DevOps 2027
+  links:
+    - { url: https://github.com/TU-USUARIO/tienda-gitops, title: Repositorio GitOps }
+spec:
+  owner: group:equipo-tienda
+  domain: comercio
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: equipo-tienda
+  title: Equipo de la tienda
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: tienda-api
+  title: API de la tienda
+  description: Catálogo de productos (con caché) y pedidos, en FastAPI
+  tags: [python, fastapi, postgresql]
+  links:
+    - { url: https://github.com/TU-USUARIO/tienda-pipeline/blob/main/observabilidad/RUNBOOK.md, title: Runbook }
+    - { url: http://localhost:3000/d/tienda-api, title: Dashboard (laboratorio) }
+  annotations:
+    github.com/project-slug: TU-USUARIO/tienda-pipeline # PRs y GitHub Actions
+    argocd/app-name: tienda-prod # estado del despliegue (Fase 6)
+    backstage.io/kubernetes-id: tienda # pods en vivo (etiqueta backstage.io/kubernetes-id)
+    backstage.io/techdocs-ref: dir:. # documentación: mkdocs.yml de la raíz
+spec:
+  type: service
+  lifecycle: production
+  owner: group:equipo-tienda
+  system: tienda
+  providesApis: [tienda-api-rest]
+  dependsOn: [resource:tienda-db, resource:tienda-cache]
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: tienda-frontend
+  title: Frontend de la tienda
+  description: Página estática servida por Nginx sin privilegios
+  tags: [nginx, html]
+  annotations:
+    github.com/project-slug: TU-USUARIO/tienda-pipeline
+spec:
+  type: website
+  lifecycle: production
+  owner: group:equipo-tienda
+  system: tienda
+  consumesApis: [tienda-api-rest]
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: tienda-api-rest
+  title: API REST de la tienda
+  description: Productos y pedidos. Especificación generada por FastAPI.
+spec:
+  type: openapi
+  lifecycle: production
+  owner: group:equipo-tienda
+  system: tienda
+  definition:
+    $text: ./api/openapi.yaml # documentación interactiva en la pestaña "Definition"
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: tienda-db
+  title: PostgreSQL de la tienda
+  description: RDS PostgreSQL (Fases 3 y 4); en el laboratorio, un contenedor
+spec:
+  type: database
+  owner: group:equipo-tienda
+  system: tienda
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: tienda-cache
+  title: Caché de la tienda
+  description: ElastiCache Valkey (Fases 3 y 4); la tienda funciona sin ella, más lenta
+spec:
+  type: cache
+  owner: group:equipo-tienda
+  system: tienda

@@ -1,0 +1,83 @@
+# Cómo se cumple la API en AWS. Los estándares que nadie puede olvidar van fijos en "base";
+# lo que elige el equipo llega por "patches".
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: basedatos-aws
+spec:
+  compositeTypeRef:
+    apiVersion: plataforma.tienda.dev/v1alpha1
+    kind: BaseDatos
+  mode: Pipeline
+  pipeline:
+    - step: recursos
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: rds
+            base:
+              # ".m." = recurso con namespace del proveedor v2: el único que puede componer una
+              # API con scope: Namespaced (los de ámbito clúster, rds.aws.upbound.io, no)
+              apiVersion: rds.aws.m.upbound.io/v1beta1
+              kind: Instance
+              spec:
+                forProvider:
+                  region: us-east-1
+                  engine: postgres
+                  instanceClass: db.t4g.micro
+                  allocatedStorage: 20
+                  maxAllocatedStorage: 100
+                  storageType: gp3
+                  storageEncrypted: true
+                  publiclyAccessible: false
+                  backupRetentionPeriod: 7
+                  copyTagsToSnapshot: true
+                  deletionProtection: true
+                  autoMinorVersionUpgrade: true
+                  dbSubnetGroupName: tienda-prod # creado por la capa datos de la Fase 4
+                  username: app
+                  dbName: app
+                  manageMasterUserPassword: true # contraseña en Secrets Manager, con rotación
+                  skipFinalSnapshot: false
+                  tags:
+                    gestionado_por: crossplane
+                    proyecto: tienda
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.version
+                toFieldPath: spec.forProvider.engineVersion
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.multiAZ
+                toFieldPath: spec.forProvider.multiAz
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tamano
+                toFieldPath: spec.forProvider.instanceClass
+                transforms:
+                  - type: map
+                    map:
+                      pequeno: db.t4g.micro
+                      mediano: db.m7g.large
+                      grande: db.r7g.xlarge
+              - type: FromCompositeFieldPath # el coste de cada base, atribuido a su equipo (FinOps)
+                fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.tags.equipo
+              - type: FromCompositeFieldPath
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.tags.servicio
+              - type: FromCompositeFieldPath # sin nombre para el snapshot final, AWS no deja borrarla
+                fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.finalSnapshotIdentifier
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: "%s-final"
+              - type: ToCompositeFieldPath # el equipo ve dónde conectarse en su recurso
+                fromFieldPath: status.atProvider.address
+                toFieldPath: status.endpoint
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.masterUserSecret[0].secretArn
+                toFieldPath: status.secretoArn

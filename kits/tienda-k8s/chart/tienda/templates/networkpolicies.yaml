@@ -1,0 +1,119 @@
+{{- $api := dict "raiz" . "componente" "api" -}}
+{{- $front := dict "raiz" . "componente" "frontend" -}}
+# 1. Nada entra ni sale de los pods de la tienda salvo lo permitido abajo
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-denegar-todo
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+# 2. Todos pueden resolver nombres (sin esto, nada funciona y el error parece otro)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-dns
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+---
+# 3. Solo los proxies del Gateway llegan al frontend y a la API
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-entrada-gateway
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}] }
+      - { key: app.kubernetes.io/component, operator: In, values: [api, frontend] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.gateway.namespaceProxies }} }
+      ports:
+        - { port: {{ .Values.api.puerto }}, protocol: TCP }
+        - { port: {{ .Values.frontend.puerto }}, protocol: TCP }
+---
+# 4. La API (y el Job de migraciones) solo salen hacia PostgreSQL, la caché y (si hay observabilidad) el Collector
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-api-salida
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}] }
+      - { key: app.kubernetes.io/component, operator: In, values: [api, migraciones] }
+  policyTypes: [Egress]
+  egress:
+    {{- if .Values.local.enabled }}
+    - to:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/component, operator: In, values: [postgres, valkey] }
+      ports:
+        - { port: 5432, protocol: TCP }
+        - { port: 6379, protocol: TCP }
+    {{- end }}
+    {{- with .Values.api.egresoDatos }}
+    - to:
+        {{- range . }}
+        - ipBlock: { cidr: {{ . }} }
+        {{- end }}
+      ports:
+        - { port: 5432, protocol: TCP }
+        - { port: 6379, protocol: TCP }
+    {{- end }}
+    {{- if .Values.observabilidad.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.observabilidad.namespaceCollector }} }
+      ports:
+        - { port: 4317, protocol: TCP }
+        - { port: 4318, protocol: TCP }
+    {{- end }}
+{{- if .Values.local.enabled }}
+---
+# 5. (laboratorio) PostgreSQL y Valkey solo aceptan a la API (y PostgreSQL, al Job de migraciones)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-datos-entrada
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/component, operator: In, values: [postgres, valkey] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - { key: app.kubernetes.io/instance, operator: In, values: [{{ .Release.Name }}] }
+              - { key: app.kubernetes.io/component, operator: In, values: [api, migraciones] }
+{{- end }}

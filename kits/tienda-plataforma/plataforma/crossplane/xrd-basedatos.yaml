@@ -1,0 +1,41 @@
+# La API que ve un equipo: "quiero una base de datos pequeña". Nada de subredes, cifrado ni copias:
+# eso lo decide la plataforma en la Composition.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: basesdatos.plataforma.tienda.dev
+spec:
+  group: plataforma.tienda.dev
+  names:
+    kind: BaseDatos
+    plural: basesdatos
+  scope: Namespaced # Crossplane 2: el equipo la pide en su propio namespace, sin "claims"
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [tamano]
+              properties:
+                tamano:
+                  type: string
+                  enum: [pequeno, mediano, grande]
+                  description: pequeno (desarrollo), mediano o grande (producción)
+                version:
+                  type: string
+                  enum: ["16", "17"]
+                  default: "17"
+                multiAZ:
+                  type: boolean
+                  default: false
+                  description: Réplica en espera en otra zona (duplica el coste)
+            status:
+              type: object
+              properties:
+                endpoint: { type: string }
+                secretoArn: { type: string }

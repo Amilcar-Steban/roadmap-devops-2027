@@ -1,0 +1,72 @@
+# Despliega una versión en un entorno. Dos formas de usarlo:
+#  - Automática: image.yml lo llama tras publicar la imagen (staging y, con aprobación, produccion).
+#  - Manual (y rollback): Actions → Deploy → Run workflow, con el entorno y la etiqueta.
+# Cada entorno (staging, produccion) necesita los secretos SSH_KEY y KNOWN_HOSTS y las variables
+# HOST y URL; produccion, además, revisores obligatorios. Detalles en PIPELINE.md.
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      entorno:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      entorno:
+        type: choice
+        options: [staging, produccion]
+        required: true
+      version:
+        description: "Etiqueta a desplegar (sha-1234abc o 1.4.2)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.entorno }}
+  cancel-in-progress: false
+
+jobs:
+  desplegar:
+    name: desplegar (${{ inputs.entorno }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.entorno }}
+      url: ${{ vars.URL }}
+    steps:
+      - name: Validar la versión
+        env:
+          ENTRADA: ${{ inputs.version }}
+        run: |
+          # Un SHA completo (desde image.yml) se convierte al formato de etiqueta de metadata-action
+          if [[ "$ENTRADA" =~ ^[0-9a-f]{40}$ ]]; then VERSION="sha-${ENTRADA::7}"; else VERSION="$ENTRADA"; fi
+          [[ "$VERSION" =~ ^(sha-[0-9a-f]{7}|[0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "Versión no válida: $VERSION"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Desplegar por SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.KNOWN_HOSTS }}
+          HOST: ${{ vars.HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # shellcheck disable=SC2029  # $VERSION debe expandirse aquí: ya está validada
+          ssh "deploy@$HOST" "cd /opt/tienda && ./scripts/deploy.sh '$VERSION'"
+
+      - name: Smoke test
+        env:
+          URL: ${{ vars.URL }}
+        run: ./scripts/smoke.sh "$URL"

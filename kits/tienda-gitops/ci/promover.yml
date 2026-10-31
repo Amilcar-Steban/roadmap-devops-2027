@@ -1,0 +1,86 @@
+# Copia este archivo a .github/workflows/promover.yml del repositorio de CÓDIGO (tienda-pipeline)
+# y llámalo desde image.yml, después del job imagen (como deploy.yml en la Fase 2):
+#
+#   promover:
+#     needs: imagen
+#     if: vars.GITOPS_APP_ID != '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+#     permissions: { contents: read }
+#     uses: ./.github/workflows/promover.yml
+#     secrets:
+#       GITOPS_APP_KEY: ${{ secrets.GITOPS_APP_KEY }}
+#
+# Cada imagen de main pasa a dev con un commit directo en el repo GitOps; cada release (etiqueta
+# vX.Y.Z) abre un PR para prod con esa versión y cierra los PRs de promoción anteriores, que quedarían
+# obsoletos. Prod solo recibe versiones, y nunca hay más de un PR de prod esperando. El CI solo puede
+# escribir en ese repositorio: nada de credenciales del clúster. Necesita una GitHub App (contents y
+# pull-requests de escritura, sin webhook) instalada en tienda-gitops, con su ID en la variable
+# GITOPS_APP_ID y su clave privada en el secreto GITOPS_APP_KEY. El token se pide solo para
+# tienda-gitops, aunque la App esté instalada en más repos.
+name: Promover
+
+on:
+  workflow_call:
+    secrets:
+      GITOPS_APP_KEY:
+        required: true
+
+permissions: {}
+
+jobs:
+  promover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_KEY }}
+          repositories: tienda-gitops
+          # Solo lo necesario, aunque la App tenga más permisos en su instalación
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/tienda-gitops
+          token: ${{ steps.token.outputs.token }}
+          path: gitops
+          persist-credentials: true # este job sí necesita hacer push con el token de la App
+
+      - name: main → dev (commit directo) · vX.Y.Z → PR para prod
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          git config user.name "tienda-gitops-bot"
+          git config user.email "tienda-gitops-bot@users.noreply.github.com"
+          poner() { sed -i -E "s/^(  etiqueta: ).*/\1\"$2\"/" "apps/tienda/$1/values.yaml"; }
+
+          if [[ "$REF" != refs/tags/v* ]]; then
+            etiqueta="sha-${SHA:0:7}" # la que publica docker/metadata-action en el workflow Imagen
+            poner dev "$etiqueta"
+            git commit -am "tienda dev → $etiqueta" && git push origin HEAD:main
+            exit 0
+          fi
+
+          version="${REF#refs/tags/v}" # la etiqueta X.Y.Z de la imagen (docker/metadata-action, semver)
+          # Los PRs de promoción que sigan abiertos quedan obsoletos: este los sustituye
+          gh pr list --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("promover-")) | .number' |
+            while read -r pr; do
+              gh pr close "$pr" --delete-branch --comment "Sustituido por la promoción de la versión $version."
+            done
+          git switch -c "promover-$version"
+          poner prod "$version"
+          git commit -am "tienda prod → $version"
+          git push -u origin HEAD
+          gh pr create --title "Promover la tienda $version a prod" \
+            --body "Release v$version (commit ${SHA}). Revisa dev antes de aprobar."

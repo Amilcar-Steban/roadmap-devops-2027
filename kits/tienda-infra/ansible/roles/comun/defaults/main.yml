@@ -1,0 +1,12 @@
+comun_paquetes:
+  - unattended-upgrades
+  - ufw
+  - openssh-server
+  - python3-venv
+  - curl
+comun_usuarios_ssh: []
+comun_firewall: true
+comun_puertos:
+  - "22"
+  - "80"
+  - "443"

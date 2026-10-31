@@ -1,0 +1,25 @@
+[Unit]
+Description=API mínima del proyecto servidor-endurecido
+After=network.target
+
+[Service]
+Type=simple
+User=miapp
+Group=miapp
+Environment=PORT=8080
+ExecStart=/usr/bin/python3 /opt/miapp/app.py
+Restart=on-failure
+RestartSec=5
+# Endurecimiento: comprueba la nota con systemd-analyze security miapp
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

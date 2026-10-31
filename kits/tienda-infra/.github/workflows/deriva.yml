@@ -1,0 +1,79 @@
+# Cada mañana compara el código con la realidad. Si alguien cambió algo a mano, abre (o actualiza) un issue.
+name: Deriva
+
+on:
+  schedule:
+    - cron: "17 6 * * 1-5"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  deriva:
+    if: vars.AWS_PLAN_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        entorno: [dev, prod]
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      ENTORNO: ${{ matrix.entorno }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.1"
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Plan de todas las capas
+        id: plan
+        run: |
+          capas_con_deriva=""
+          for capa in red datos app edge; do
+            dir="entornos/$ENTORNO/$capa"
+            terraform -chdir="$dir" init
+            set +e
+            # -lock=false: solo lee; así no bloquea a un apply que coincida en el tiempo
+            terraform -chdir="$dir" plan -no-color -lock=false -detailed-exitcode > "$dir/plan.txt" 2>&1
+            codigo=$?
+            set -e
+            cat "$dir/plan.txt"
+            # 0 = sin cambios · 1 = error · 2 = el código y la realidad no coinciden
+            if (( codigo == 1 )); then exit 1; fi
+            if (( codigo == 2 )); then capas_con_deriva+="$capa "; fi
+          done
+          echo "capas=$capas_con_deriva" >> "$GITHUB_OUTPUT"
+
+      - name: Abrir o actualizar el issue
+        if: steps.plan.outputs.capas != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CAPAS: ${{ steps.plan.outputs.capas }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          titulo="Deriva en $ENTORNO"
+          cuerpo="Capas con diferencias: $CAPAS"$'\n\n'"Plan completo: $URL"$'\n\n'"Si el cambio manual era correcto, llévalo al código; si no, revierte con un apply."
+          numero=$(gh issue list --state open --search "\"$titulo\" in:title" --json number --jq '.[0].number')
+          if [[ -n "$numero" ]]; then
+            gh issue comment "$numero" --body "$cuerpo"
+          else
+            gh issue create --title "$titulo" --body "$cuerpo"
+          fi

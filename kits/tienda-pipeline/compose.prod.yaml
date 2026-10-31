@@ -1,0 +1,37 @@
+# Producción: imágenes del registry y endurecimiento.
+# Uso: COMPOSE_FILE=compose.yaml:compose.prod.yaml en .env, y después docker compose pull && docker compose up -d
+x-endurecido: &endurecido
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  proxy:
+    <<: *endurecido
+
+  frontend:
+    <<: *endurecido
+    image: ${REGISTRY:-ghcr.io}/${GHCR_USER:?Define GHCR_USER en .env}/tienda-frontend:${TAG:-1.0.0}
+    build: !reset null
+
+  api:
+    <<: *endurecido
+    image: ${REGISTRY:-ghcr.io}/${GHCR_USER:?Define GHCR_USER en .env}/tienda-api:${TAG:-1.0.0}
+    build: !reset null
+    deploy:
+      replicas: 2
+      resources:
+        limits: { cpus: "0.50", memory: 256M }
+
+  db:
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  cache:
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits: { memory: 128M }

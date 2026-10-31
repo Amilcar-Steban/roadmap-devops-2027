@@ -1,0 +1,8 @@
+# Lo que escribe un equipo en su repositorio GitOps (o lo genera la plantilla de Backstage)
+apiVersion: plataforma.tienda.dev/v1alpha1
+kind: BaseDatos
+metadata:
+  name: notificaciones-db
+  namespace: notificaciones
+spec:
+  tamano: pequeno

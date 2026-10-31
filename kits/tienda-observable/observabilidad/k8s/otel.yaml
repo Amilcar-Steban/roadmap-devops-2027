@@ -1,0 +1,117 @@
+# OpenTelemetry en Kubernetes con el Operator: el Collector y la instrumentación de la API sin tocar
+# su imagen. Requiere el Operator (README) y kube-prometheus-stack + Loki en "monitoring".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observabilidad
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: tienda
+  namespace: observabilidad
+spec:
+  mode: deployment
+  image: otel/opentelemetry-collector-k8s:0.162.0
+  observability:
+    metrics: { enableMetrics: true } # el Operator crea el ServiceMonitor de sus métricas (puerto 8888)
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: 0.0.0.0:4317 }
+          http: { endpoint: 0.0.0.0:4318 }
+    processors:
+      memory_limiter: { check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 20 }
+      batch: {}
+      # El Operator añade service.namespace=tienda y Prometheus formaría job="tienda/tienda-api", no el
+      # job="tienda-api" de las reglas, los paneles y el agente (Compose). El namespace sigue en k8s.namespace.name.
+      resource/job:
+        attributes:
+          - { key: service.namespace, action: delete }
+    exporters:
+      otlphttp/prometheus:
+        endpoint: http://monitoring-kube-prometheus-prometheus.monitoring:9090/api/v1/otlp
+      debug: { verbosity: basic, sampling_initial: 1, sampling_thereafter: 1000 } # trazas: añade Tempo como en Compose
+    service:
+      pipelines:
+        metrics: { receivers: [otlp], processors: [memory_limiter, resource/job, batch], exporters: [otlphttp/prometheus] }
+        traces: { receivers: [otlp], processors: [memory_limiter, batch], exporters: [debug] }
+---
+# La misma configuración que la API tiene en Compose, inyectada por el Operator en los pods con la
+# anotación instrumentation.opentelemetry.io/inject-python: "observabilidad/tienda"
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: tienda
+  namespace: observabilidad
+spec:
+  exporter:
+    endpoint: http://tienda-collector.observabilidad:4318
+  propagators: [tracecontext, baggage]
+  # La imagen que copia la instrumentación corre como root: en un namespace con Pod Security
+  # "restricted" (la tienda, Fase 5) el pod no arranca sin esto
+  initContainerSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities: { drop: [ALL] }
+  resource:
+    resourceAttributes:
+      deployment.environment.name: kind
+  python:
+    env:
+      - { name: OTEL_SERVICE_NAME, value: tienda-api }
+      - { name: OTEL_METRICS_EXPORTER, value: otlp }
+      # Los logs no van por OTLP: los recoge del nodo el Collector "logs" (abajo), también los de
+      # PostgreSQL y Valkey. Con OTLP, la imagen sin el logging.json de la Fase 7 solo enviaba 2 líneas.
+      - { name: OTEL_LOGS_EXPORTER, value: none }
+      - { name: OTEL_SEMCONV_STABILITY_OPT_IN, value: http }
+      - { name: OTEL_PYTHON_FASTAPI_EXCLUDED_URLS, value: health }
+      - { name: OTEL_METRIC_EXPORT_INTERVAL, value: "15000" }
+---
+# Logs de todos los contenedores de la tienda, leídos del nodo (un pod por nodo). Necesita leer
+# /var/log/pods, propiedad de root: por eso vive en su propio namespace, sin Pod Security "restricted".
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: logs
+  namespace: observabilidad
+spec:
+  mode: daemonset
+  image: otel/opentelemetry-collector-k8s:0.162.0
+  securityContext: { runAsUser: 0, runAsGroup: 0 }
+  volumes:
+    - { name: varlogpods, hostPath: { path: /var/log/pods } }
+  volumeMounts:
+    - { name: varlogpods, mountPath: /var/log/pods, readOnly: true }
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 256Mi }
+  config:
+    receivers:
+      filelog:
+        include: [/var/log/pods/tienda_*/*/*.log]
+        start_at: end
+        include_file_path: true
+        operators:
+          - { type: container, id: contenedor } # formato CRI + k8s.namespace.name, k8s.pod.name, k8s.container.name
+    processors:
+      memory_limiter: { check_interval: 1s, limit_percentage: 80, spike_limit_percentage: 20 }
+      # service.name como en Compose: tienda-api, tienda-postgres… (Loki lo indexa como service_name)
+      transform/servicio:
+        log_statements:
+          - context: resource
+            statements:
+              - set(attributes["service.name"], Concat(["tienda", attributes["k8s.container.name"]], "-"))
+      batch: {}
+    exporters:
+      otlphttp/loki:
+        endpoint: http://loki.monitoring:3100/otlp
+    service:
+      pipelines:
+        logs: { receivers: [filelog], processors: [memory_limiter, transform/servicio, batch], exporters: [otlphttp/loki] }

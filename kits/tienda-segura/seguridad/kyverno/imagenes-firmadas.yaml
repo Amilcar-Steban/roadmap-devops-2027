@@ -1,0 +1,44 @@
+# Solo se ejecutan las imágenes de la tienda firmadas por NUESTRO workflow Imagen, en main o en una
+# etiqueta de versión vX.Y.Z (firma keyless de Sigstore: no hay claves que robar), y con su SBOM firmado.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: tienda-imagenes-firmadas
+spec:
+  validationActions: [Deny]
+  webhookConfiguration:
+    timeoutSeconds: 20 # verificar consulta el registro y Rekor: más lento que una validación normal
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: "ghcr.io/tu-usuario/tienda-*"
+  validationConfigurations:
+    mutateDigest: true # sustituye la etiqueta por el digest verificado: lo que corre es lo firmado
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: ci
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              # main (sha-…) o una etiqueta de release (X.Y.Z): las dos identidades con las que firma el CI
+              subjectRegExp: '^https://github\.com/TU-USUARIO/tienda-pipeline/\.github/workflows/image\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$'
+        ctlog:
+          url: https://rekor.sigstore.dev
+  attestations:
+    - name: sbom
+      intoto:
+        type: https://cyclonedx.org/bom
+  validations:
+    - message: "La imagen no está firmada por el workflow Imagen de tienda-pipeline (main o una versión)"
+      expression: >-
+        images.containers.map(i, verifyImageSignatures(i, [attestors.ci])).all(n, n > 0)
+    - message: "La imagen no tiene un SBOM firmado por nuestro CI"
+      expression: >-
+        images.containers.map(i, verifyAttestationSignatures(i, attestations.sbom, [attestors.ci])).all(n, n > 0)

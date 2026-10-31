@@ -1,0 +1,85 @@
+{{- $sel := dict "raiz" . "componente" "frontend" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+  annotations:
+    # kube-linter no reconoce topologySpreadConstraints, que aquí reparte las réplicas por nodo
+    ignore-check.kube-linter.io/no-anti-affinity: "reparto por nodo con topologySpreadConstraints"
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "tienda.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "tienda.selector" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "tienda.podSeguro" . | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          matchLabelKeys: [pod-template-hash] # contar solo los pods de la misma versión
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              {{- include "tienda.selector" $sel | nindent 14 }}
+      containers:
+        - name: frontend
+          image: {{ include "tienda.imagen" (dict "raiz" . "componente" "frontend" "etiqueta" .Values.frontend.etiqueta) }}
+          imagePullPolicy: {{ .Values.imagen.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.puerto }}
+          securityContext:
+            {{- include "tienda.contenedorSeguro" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.frontend.recursos | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp } # nginx-unprivileged escribe su pid y cachés en /tmp
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 32Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "tienda.selector" $sel | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-frontend
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  # Un pod que ya no está sano (CrashLoop) se puede desalojar aunque el PDB no se cumpla:
+  # si no, un solo pod roto bloquea el drain de un nodo para siempre
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "tienda.selector" $sel | nindent 6 }}

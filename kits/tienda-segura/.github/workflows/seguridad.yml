@@ -1,0 +1,61 @@
+# Controles de seguridad del código y de las políticas (Fase 8):
+#   sast      · Semgrep con reglas públicas y propias; resultados en la pestaña Security del repo
+#   politicas · las políticas de Kyverno se prueban como código antes de llegar al clúster
+name: Seguridad
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1" # cada lunes: reglas nuevas sobre código que no ha cambiado
+
+permissions: {}
+
+concurrency:
+  group: seguridad-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write # subir el SARIF a Code scanning
+    container:
+      image: semgrep/semgrep:1.183.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Probar las reglas propias
+        run: semgrep --test seguridad/semgrep/
+
+      - name: Analizar (todo al informe; solo ERROR rompe el build)
+        run: |
+          semgrep scan --metrics=off --config p/python --config seguridad/semgrep/tienda.yaml \
+            --sarif --output semgrep.sarif api/
+          semgrep scan --metrics=off --config p/python --config seguridad/semgrep/tienda.yaml \
+            --severity ERROR --error api/
+
+      - name: Resultados en la pestaña Security
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) # los PR de forks no pueden escribir
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  politicas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: kyverno test
+        run: docker run --rm -v "$PWD/seguridad/kyverno":/k ghcr.io/kyverno/kyverno-cli:v1.19.2 test /k/pruebas

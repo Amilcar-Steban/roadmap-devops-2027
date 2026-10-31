@@ -1,0 +1,69 @@
+# Valores por defecto: seguros y pensados para producción. values-kind.yaml y values-prod.yaml
+# solo cambian lo que difiere en cada entorno.
+
+imagen:
+  registro: ghcr.io/tu-usuario # cámbialo por tu usuario de GitHub, en minúsculas
+  pullPolicy: IfNotPresent
+
+api:
+  etiqueta: "" # vacío = appVersion del chart
+  replicas: 2
+  puerto: 8000
+  recursos:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 256Mi } # sin límite de CPU: evita el throttling con CPU libre
+  hpa:
+    enabled: true
+    min: 2
+    max: 6
+    cpu: 70 # % del request
+  # Conexión a PostgreSQL: el host y el usuario son configuración; la contraseña, un Secret
+  bd:
+    host: ""
+    nombre: app
+    usuario: app
+    sslmode: require
+    secreto: tienda-bd # Secret con la clave "password" (lo crea External Secrets o local.enabled)
+  redisUrl: ""
+  egresoDatos: [] # CIDRs de las subredes de datos (RDS y caché), para la NetworkPolicy
+
+frontend:
+  etiqueta: ""
+  replicas: 2
+  puerto: 8080
+  recursos:
+    requests: { cpu: 20m, memory: 32Mi }
+    limits: { memory: 64Mi }
+
+# Migraciones (Fase 8): un Job crea el esquema con el usuario dueño y la API arranca sin crear tablas,
+# lo que permite darle credenciales de mínimo privilegio (Vault). Si es false, la API crea el esquema.
+migraciones:
+  job: false
+
+# Observabilidad en Kubernetes (Fase 7): el OpenTelemetry Operator inyecta la instrumentación en la
+# API (sin cambiar su imagen) y la API envía métricas, logs y trazas al Collector por OTLP
+observabilidad:
+  enabled: false
+  instrumentacion: observabilidad/tienda # <namespace>/<nombre> del recurso Instrumentation
+  namespaceCollector: observabilidad # la NetworkPolicy abre la salida hacia él (4317 y 4318)
+
+# Entrada HTTP con Gateway API
+gateway:
+  crear: false # true: el chart crea su propio Gateway (laboratorio); false: usa uno compartido
+  clase: eg # GatewayClass de Envoy Gateway
+  nombre: publica
+  namespace: infra
+  hostname: tienda.ejemplo.com
+  # Namespace de los proxies de Envoy, únicos que pueden llamar a la API y al frontend
+  namespaceProxies: envoy-gateway-system
+
+# Secreto de la base de datos desde AWS Secrets Manager (External Secrets Operator)
+externalSecret:
+  enabled: false
+  store: aws-secrets-manager
+  claveRemota: "" # nombre o ARN del secreto que gestiona RDS (rds!db-…)
+
+# PostgreSQL y Valkey dentro del clúster. SOLO para el laboratorio: en producción, RDS y ElastiCache
+local:
+  enabled: false
+  passwordBd: solo-para-el-laboratorio

@@ -1,0 +1,10 @@
+La tienda {{ .Chart.AppVersion }} está instalada en el namespace {{ .Release.Namespace }}.
+
+  kubectl get pods,svc,httproute -n {{ .Release.Namespace }}
+  kubectl rollout status deploy/{{ .Release.Name }}-api -n {{ .Release.Namespace }}
+{{- if .Values.gateway.crear }}
+
+Laboratorio: abre el Gateway en tu portátil con
+  ./kind/abrir-tienda.sh {{ .Release.Namespace }}
+y visita http://{{ .Values.gateway.hostname }}:8080
+{{- end }}

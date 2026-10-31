@@ -1,0 +1,129 @@
+# La tienda observable. Se superpone a la pila de la tienda:
+#   docker compose -f compose.yaml -f observabilidad/compose.yaml up -d --build
+# Grafana en http://localhost:3000 (anónimo, solo lectura) · Prometheus en http://localhost:9090
+#
+#   api ──OTLP──► collector ─┬─ trazas  ──► tempo ─┐
+#                            ├─ métricas ─► prometheus ──► alertmanager ──► alertas (registro)
+#                            └─ logs ─────► loki ──┴──► grafana
+name: tienda
+
+x-logging: &logging
+  driver: local
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  # La API, instrumentada (mismo código, otra imagen)
+  api:
+    build:
+      context: ./observabilidad/api
+      additional_contexts:
+        codigo: ./api
+    environment:
+      OTEL_SERVICE_NAME: tienda-api
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=dev,service.version=${APP_VERSION:-dev}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_METRICS_EXPORTER: otlp
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "true" # trace_id y span_id en cada log
+      OTEL_SEMCONV_STABILITY_OPT_IN: http # nombres estables: http.server.request.duration
+      OTEL_PYTHON_FASTAPI_EXCLUDED_URLS: health # las sondas no son tráfico de usuarios
+      OTEL_METRIC_EXPORT_INTERVAL: "15000"
+    networks: [frontend, backend, observabilidad]
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observabilidad/collector/config.yaml:/etc/otelcol/config.yaml:ro
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-otlp-receiver # recibe las métricas del Collector por OTLP
+      - --web.enable-lifecycle # POST /-/reload para recargar reglas sin reiniciar
+      - --enable-feature=exemplar-storage # guardar exemplars: saltar de un pico a su traza
+    volumes:
+      - ./observabilidad/prometheus:/etc/prometheus:ro
+      - prometheus:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./observabilidad/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports: ["127.0.0.1:9093:9093"]
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  # Recibe los avisos de Alertmanager y los escribe en su log (sustitúyelo por Slack o PagerDuty)
+  alertas:
+    image: mendhak/http-https-echo:39
+    environment: { HTTP_PORT: "8080", LOG_IGNORE_PATH: "/ping" }
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.7.9
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./observabilidad/loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki:/loki
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  tempo:
+    image: grafana/tempo:2.9.2
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./observabilidad/tempo/config.yaml:/etc/tempo/config.yaml:ro
+      - tempo:/var/tempo
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true" # laboratorio: entrar sin usuario, solo lectura
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+    volumes:
+      - ./observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidad/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [observabilidad]
+    restart: unless-stopped
+    logging: *logging
+
+  # Tráfico constante a través del proxy, como si hubiera usuarios (sin carga, no hay métricas)
+  carga:
+    image: curlimages/curl:8.17.0
+    entrypoint: ["/bin/sh", "/carga.sh"]
+    volumes:
+      - ./observabilidad/carga/carga.sh:/carga.sh:ro
+    depends_on:
+      proxy: { condition: service_started }
+    networks: [frontend]
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  prometheus:
+  loki:
+  tempo:
+
+networks:
+  observabilidad:

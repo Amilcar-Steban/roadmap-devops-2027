@@ -1,0 +1,17 @@
+# kind create cluster --name lab --config kind/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# Sin el CNI de kind (kindnetd): no aplica las NetworkPolicies de SALIDA. crear-lab.sh instala Calico,
+# que sí las aplica (entrada y salida), como la VPC CNI de EKS con enableNetworkPolicy.
+networking:
+  disableDefaultCNI: true
+  podSubnet: 10.244.0.0/16
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0
+    extraPortMappings: # NodePort 30080 accesible en localhost:30080 (laboratorio del módulo 5)
+      - { containerPort: 30080, hostPort: 30080 }
+  - role: worker
+    image: kindest/node:v1.37.0
+  - role: worker
+    image: kindest/node:v1.37.0

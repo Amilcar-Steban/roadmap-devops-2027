@@ -1,0 +1,7 @@
+# El proveedor de RDS de AWS (v2: publica los recursos ".m.", con namespace)
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-rds
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/provider-aws-rds:v2.9.0

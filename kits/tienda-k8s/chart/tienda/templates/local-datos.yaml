@@ -1,0 +1,98 @@
+{{- if .Values.local.enabled }}
+# PostgreSQL y Valkey efímeros (emptyDir) para el laboratorio en kind. NO para producción:
+# allí los datos viven en RDS y ElastiCache (Fases 3 y 4).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.api.bd.secreto }}
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+type: Opaque
+stringData:
+  password: {{ .Values.local.passwordBd | quote }}
+{{- range $c := list "postgres" "valkey" }}
+{{- $sel := dict "raiz" $ "componente" $c }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $c }}
+  labels:
+    {{- include "tienda.etiquetas" $ | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      {{- include "tienda.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "tienda.selector" $sel | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "tienda.podSeguro" $ | nindent 8 }}
+        {{- if eq $c "postgres" }}
+        runAsUser: 70 # usuario postgres de la imagen alpine
+        runAsGroup: 70
+        fsGroup: 70
+        {{- else }}
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        {{- end }}
+      containers:
+        - name: {{ $c }}
+          {{- if eq $c "postgres" }}
+          image: postgres:18-alpine
+          env:
+            - { name: POSTGRES_DB, value: {{ $.Values.api.bd.nombre | quote }} }
+            - { name: POSTGRES_USER, value: {{ $.Values.api.bd.usuario | quote }} }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ $.Values.api.bd.secreto }}, key: password }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ name: tcp, containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", {{ $.Values.api.bd.usuario | quote }}] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: datos, mountPath: /var/lib/postgresql/data }
+            - { name: run, mountPath: /var/run/postgresql }
+            - { name: tmp, mountPath: /tmp }
+          {{- else }}
+          image: valkey/valkey:9-alpine
+          args: ["--save", "", "--appendonly", "no"]
+          ports: [{ name: tcp, containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ["valkey-cli", "ping"] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: datos, mountPath: /data }
+          {{- end }}
+          securityContext:
+            {{- include "tienda.contenedorSeguro" $ | nindent 12 }}
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - { name: datos, emptyDir: {} }
+        {{- if eq $c "postgres" }}
+        - { name: run, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $c }}
+  labels:
+    {{- include "tienda.etiquetas" $ | nindent 4 }}
+spec:
+  selector:
+    {{- include "tienda.selector" $sel | nindent 4 }}
+  ports:
+    - { name: tcp, port: {{ ternary 5432 6379 (eq $c "postgres") }}, targetPort: tcp }
+{{- end }}
+{{- end }}

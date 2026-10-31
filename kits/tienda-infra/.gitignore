@@ -1,0 +1,15 @@
+# Carpetas de trabajo y estados locales: nunca a Git
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+plan.txt
+plan.json
+plan-*.md
+crash.log
+crash.*.log
+# override.tf sirve para pruebas locales que no deben compartirse
+override.tf
+*_override.tf
+# .terraform.lock.hcl SÍ va a Git

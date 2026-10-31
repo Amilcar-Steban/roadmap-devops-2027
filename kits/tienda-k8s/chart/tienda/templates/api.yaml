@@ -1,0 +1,151 @@
+{{- $sel := dict "raiz" . "componente" "api" -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+automountServiceAccountToken: false # la API no habla con Kubernetes
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.api.hpa.enabled }}
+  replicas: {{ .Values.api.replicas }} # con HPA, las réplicas las decide él
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "tienda.selector" $sel | nindent 6 }}
+  template:
+    metadata:
+      {{- if .Values.observabilidad.enabled }}
+      annotations:
+        instrumentation.opentelemetry.io/inject-python: {{ .Values.observabilidad.instrumentacion | quote }}
+      {{- end }}
+      labels:
+        {{- include "tienda.selector" $sel | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-api
+      securityContext:
+        {{- include "tienda.podSeguro" . | nindent 8 }}
+      topologySpreadConstraints:
+        # Entre nodos, obligatorio: dos réplicas nunca comparten nodo si hay otro disponible
+        # (en EKS, Karpenter crea un nodo si hace falta). Entre zonas, preferencia: kind no tiene zonas.
+        {{- range $clave, $cuando := dict "kubernetes.io/hostname" "DoNotSchedule" "topology.kubernetes.io/zone" "ScheduleAnyway" }}
+        - maxSkew: 1
+          topologyKey: {{ $clave }}
+          whenUnsatisfiable: {{ $cuando }}
+          matchLabelKeys: [pod-template-hash] # contar solo los pods de la misma versión
+          nodeTaintsPolicy: Honor # no contar nodos donde no puede ir (el plano de control)
+          labelSelector:
+            matchLabels:
+              {{- include "tienda.selector" $sel | nindent 14 }}
+        {{- end }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: {{ include "tienda.imagen" (dict "raiz" . "componente" "api" "etiqueta" .Values.api.etiqueta) }}
+          imagePullPolicy: {{ .Values.imagen.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.puerto }}
+          env:
+            {{- include "tienda.entornoBd" . | nindent 12 }}
+            {{- if .Values.migraciones.job }}
+            - name: ESQUEMA_AL_ARRANCAR # el esquema lo crea el Job de migraciones (migraciones.yaml)
+              value: "false"
+            {{- end }}
+            - name: REDIS_URL
+              value: {{ required "api.redisUrl es obligatorio" .Values.api.redisUrl | quote }}
+            - name: APP_VERSION
+              value: {{ .Values.api.etiqueta | default .Chart.AppVersion | quote }}
+          securityContext:
+            {{- include "tienda.contenedorSeguro" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.recursos | nindent 12 }}
+          startupProbe: # hasta 60 s para conectar con la base y crear el esquema
+            tcpSocket: { port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe: # /health consulta PostgreSQL: sin base, fuera del Service
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe: # solo "el proceso responde": nunca la base de datos
+            tcpSocket: { port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              sleep: { seconds: 5 } # el Gateway deja de enviarle tráfico antes del SIGTERM
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "tienda.selector" $sel | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  maxUnavailable: 1 # un drain nunca se lleva más de una réplica a la vez
+  # Un pod que ya no está sano (CrashLoop) se puede desalojar aunque el PDB no se cumpla:
+  # si no, un solo pod roto bloquea el drain de un nodo para siempre
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "tienda.selector" $sel | nindent 6 }}
+{{- if .Values.api.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    {{- include "tienda.etiquetas" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-api
+  minReplicas: {{ .Values.api.hpa.min }}
+  maxReplicas: {{ .Values.api.hpa.max }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.api.hpa.cpu }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+{{- end }}

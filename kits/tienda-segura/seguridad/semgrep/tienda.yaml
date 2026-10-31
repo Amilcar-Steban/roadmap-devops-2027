@@ -1,0 +1,42 @@
+# Reglas propias de la tienda para Semgrep (SAST). Se ejecutan junto a las reglas públicas:
+#   semgrep scan --config p/python --config seguridad/semgrep/ api/
+# Probar las reglas: semgrep --test seguridad/semgrep/
+rules:
+  - id: sql-construido-con-texto
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Consulta SQL construida con f-string, concatenación o format: riesgo de inyección.
+      Usa parámetros: conn.execute("… WHERE id = %s", (valor,))
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+    pattern-either:
+      - pattern: $C.execute(f"...", ...)
+      - pattern: $C.execute($A + $B, ...) # cualquier concatenación, aunque tenga varias partes
+      - pattern: $C.execute("...".format(...), ...)
+      - pattern: $C.execute("..." % $X, ...)
+
+  - id: secreto-en-el-codigo
+    languages: [python]
+    severity: ERROR
+    message: "Credencial escrita en el código: léela de una variable de entorno o de un gestor de secretos"
+    patterns:
+      - pattern-either:
+          - pattern: $NOMBRE = "..."
+      - metavariable-regex:
+          metavariable: $NOMBRE
+          regex: (?i).*(password|passwd|clave|secret|token|api_key).*
+      - pattern-not: $NOMBRE = ""
+
+  - id: excepcion-silenciada
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Excepción capturada y descartada: el error desaparece de logs y trazas (Fase 7).
+      Regístralo (log.exception) o vuelve a lanzarlo.
+    pattern: |
+      try:
+          ...
+      except $E:
+          pass

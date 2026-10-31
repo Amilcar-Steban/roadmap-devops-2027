@@ -1,0 +1,68 @@
+- name: Paquetes base
+  ansible.builtin.apt:
+    name: "{{ comun_paquetes }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Actualizaciones de seguridad automáticas
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Grupo con acceso por SSH
+  ansible.builtin.group:
+    name: ssh-users
+    state: present
+
+- name: Usuarios con acceso por SSH
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: ssh-users
+    append: true
+    shell: /bin/bash
+  loop: "{{ comun_usuarios_ssh }}"
+
+# En Ubuntu 24.04 ssh arranca por socket: hasta la primera conexión no existe /run/sshd,
+# y sin ella "sshd -t" falla aunque la configuración sea correcta
+- name: Directorio de separación de privilegios de sshd
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: SSH endurecido (validado antes de instalarlo)
+  ansible.builtin.template:
+    src: 10-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Recargar ssh
+
+- name: Firewall
+  when: comun_firewall
+  block:
+    - name: "Firewall: denegar la entrada por defecto"
+      community.general.ufw:
+        default: deny
+        direction: incoming
+
+    - name: "Firewall: puertos permitidos"
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ comun_puertos }}"
+
+    - name: "Firewall: activado"
+      community.general.ufw:
+        state: enabled

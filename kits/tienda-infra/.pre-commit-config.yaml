@@ -1,0 +1,21 @@
+# pipx install pre-commit && pre-commit install   → se ejecuta en cada git commit
+repos:
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.109.3
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        args: ["--tf-init-args=-backend=false"]
+      - id: terraform_tflint
+        args: ["--args=--config=__GIT_WORKING_DIR__/.tflint.hcl"]
+      - id: terraform_trivy
+        args: ["--args=--severity=HIGH,CRITICAL"]
+      - id: terraform_docs
+        files: ^modules/
+        args: ["--args=--output-mode=inject"]
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace

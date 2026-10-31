@@ -1,0 +1,4 @@
+nginx_dominio: localhost
+nginx_puerto_app: 8080
+nginx_entorno: dev
+nginx_raiz: /var/www/sitio

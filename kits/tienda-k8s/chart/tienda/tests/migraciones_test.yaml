@@ -1,0 +1,32 @@
+# helm unittest chart/tienda   (plugin helm-unittest)
+suite: Migraciones
+templates:
+  - templates/migraciones.yaml
+  - templates/api.yaml
+values:
+  - ../values-kind.yaml
+tests:
+  - it: sin migraciones.job, no hay Job y la API crea el esquema
+    asserts:
+      - hasDocuments: { count: 0 }
+        template: templates/migraciones.yaml
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: { name: ESQUEMA_AL_ARRANCAR, value: "false" }
+        template: templates/api.yaml
+        documentSelector: { path: kind, value: Deployment }
+
+  - it: con migraciones.job, un hook de Helm migra y la API no crea tablas
+    set: { migraciones.job: true }
+    asserts:
+      - equal: { path: "metadata.annotations[\"helm.sh/hook\"]", value: "post-install,pre-upgrade" }
+        template: templates/migraciones.yaml
+      - equal: { path: "spec.template.spec.containers[0].command", value: ["python", "-m", "app.migrar"] }
+        template: templates/migraciones.yaml
+      - equal: { path: spec.template.spec.securityContext.runAsNonRoot, value: true }
+        template: templates/migraciones.yaml
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: { name: ESQUEMA_AL_ARRANCAR, value: "false" }
+        template: templates/api.yaml
+        documentSelector: { path: kind, value: Deployment }

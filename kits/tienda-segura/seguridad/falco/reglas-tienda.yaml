@@ -1,0 +1,52 @@
+# Reglas propias de Falco para la tienda. Se cargan después de las reglas por defecto
+# (usan sus macros: spawned_process, container, open_write…).
+#   helm install falco falcosecurity/falco -n falco --create-namespace \
+#     --set driver.kind=modern_ebpf --set-file customRules.reglas-tienda\.yaml=seguridad/falco/reglas-tienda.yaml
+
+- list: tienda_namespaces
+  items: [tienda, tienda-dev, tienda-prod]
+
+- list: binarios_shell
+  items: [bash, sh, zsh, dash, ash]
+
+- rule: Shell en un contenedor de la tienda
+  desc: >
+    Alguien abrió una shell en un contenedor de la tienda. Las imágenes de la API y del frontend
+    nunca la necesitan: o es una persona con kubectl exec, o un atacante.
+  condition: >
+    spawned_process and container
+    and proc.name in (binarios_shell)
+    and k8s.ns.name in (tienda_namespaces)
+    and not proc.pname in (runc, containerd-shim)
+  output: >
+    Shell en la tienda (pod=%k8s.pod.name ns=%k8s.ns.name imagen=%container.image.repository
+    usuario=%user.name comando=%proc.cmdline padre=%proc.pname)
+  priority: WARNING
+  tags: [tienda, shell, mitre_execution]
+
+- rule: Escritura en directorios de binarios en la tienda
+  desc: Un contenedor modifica sus binarios (las imágenes son inmutables por diseño)
+  condition: >
+    open_write and container
+    and k8s.ns.name in (tienda_namespaces)
+    and (fd.directory in (/bin, /sbin, /usr/bin, /usr/sbin, /usr/local/bin))
+  output: >
+    Escritura en %fd.name (pod=%k8s.pod.name imagen=%container.image.repository
+    comando=%proc.cmdline)
+  priority: ERROR
+  tags: [tienda, filesystem, mitre_persistence]
+
+- rule: Conexion saliente inesperada de la API
+  desc: >
+    La API solo habla con PostgreSQL, la caché y el Collector, todos en redes privadas. La macro
+    "outbound" de Falco ya ignora los destinos privados (RFC 1918), así que cualquier conexión que
+    llegue aquí va a Internet: un minero, un servidor de control o una fuga de datos. No hay
+    excepciones por puerto: una excepción para el 5432 dejaría sacar datos a un servidor ajeno por él.
+  condition: >
+    outbound and container
+    and k8s.ns.name in (tienda_namespaces)
+    and k8s.pod.label[app.kubernetes.io/component] = "api"
+  output: >
+    Conexión saliente de la API a %fd.sip:%fd.sport (pod=%k8s.pod.name comando=%proc.cmdline)
+  priority: CRITICAL
+  tags: [tienda, network, mitre_command_and_control]
